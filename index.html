@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>易安堂</title>
+<!-- 内联 SVG 图标：避免额外请求与 favicon 404，全站零外链 -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='7'%20fill='%23A6432E'/%3E%3Ctext%20x='16'%20y='23'%20font-size='19'%20text-anchor='middle'%20fill='%23F6F2E9'%20font-family='serif'%3E%E9%A4%8A%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+
+<!-- 登录 / 个人中心入口：独立元素，不占导航栏 -->
+<button class="user-entry" id="userEntry" type="button" aria-label="登录或进入个人中心">
+  <span class="ue-avatar" aria-hidden="true">
+    <svg viewBox="0 0 24 24" width="17" height="17">
+      <circle cx="12" cy="8.2" r="3.5" fill="currentColor"/>
+      <path d="M4.6 20c1.3-3.7 3.9-5.5 7.4-5.5s6.1 1.8 7.4 5.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+    </svg>
+  </span>
+  <span class="ue-text" id="ueText">登录</span>
+</button>
+
+<header class="topbar">
+  <div class="wrap topbar-inner">
+    <div class="brand">
+      <span class="brand-seal">養</span>
+      <div class="brand-text">
+        <b>易安堂</b>
+      </div>
+    </div>
+    <nav id="nav">
+      <a href="#" data-page="home">首页</a>
+      <a href="#" data-page="habits">习惯打卡</a>
+      <a href="#" data-page="recipes">每日食谱</a>
+      <a href="#" data-page="archive">身体档案</a>
+      <a href="#" data-page="about">关于</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap" id="app"></main>
+
+<footer class="foot wrap">
+  <p>本工具用于健康自测与养生参考，不构成医疗诊断。体质最终判定须由注册中医师结合面诊、舌诊、脉诊确认。登录数据将与账号绑定并同步保存。</p>
+</footer>
+
+<div class="toast-host"></div>
+<div class="modal-host" id="modalHost" hidden></div>
+
+<script src="assets/data-constitution.js"></script>
+<script src="assets/data-habits.js"></script>
+<script src="assets/data-recipes.js"></script>
+<script src="assets/config.js"></script>
+<script src="assets/auth.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>
