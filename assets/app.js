@@ -22,6 +22,8 @@ const PERIOD_CYCLE_DEFAULT = 30, PERIOD_CYCLE_MIN = 20, PERIOD_CYCLE_MAX = 40;
 
 const DEFAULT_STATE = {
   version: 1,
+  /* 最近一次真实数据修改时间：用于刷新 / 多端同步时判断哪一侧更新，旧数据默认按 0 兼容。 */
+  _updatedAt: 0,
   profile: { name: '', gender: '', age: '', height: '' },
   /* 登录用户：{ name, gender: female|male|other, age, since }；未登录为 null */
   user: null,
@@ -99,62 +101,179 @@ let ui = {
 };
 
 /* 云端账号同步：云端为主，本机保留临时缓存；旧版未配置账号时继续使用本地模式。 */
-const CLOUD_SYNC = { ready: false, revision: 0, timer: 0, busy: false };
+const CLOUD_SYNC = { ready: false, revision: 0, timer: 0, busy: false, dirty: false };
 function cloudOn() { return typeof EYAuth !== 'undefined' && EYAuth.enabled && EYAuth.enabled(); }
 function cloudUser() { return cloudOn() && EYAuth.signedIn() ? EYAuth.user() : null; }
+function personalDataScore(s) {
+  if (!s) return 0;
+  const count = x => x && typeof x === 'object' ? Object.keys(x).length : 0;
+  return (s.assessment ? 20 : 0) + (s.plan ? 10 : 0) + ((s.history || []).length * 8) +
+    (count(s.records) * 4) + (count(s.period && s.period.logs) * 3) +
+    (count(s.habits && s.habits.logs) * 2) + ((s.habits && s.habits.list) || []).length +
+    (s.weight && (s.weight.goal || s.weight.plan) ? 3 : 0) +
+    (s.profile && s.profile.height ? 1 : 0) +
+    (s.diet && ((s.diet.likes || []).length || (s.diet.avoids || []).length || (s.diet.chronic || []).length || s.diet.avoidText) ? 2 : 0);
+}
 function hasPersonalData(s) {
-  return !!(s && (s.assessment || s.plan || (s.history && s.history.length) || (s.records && Object.keys(s.records).length) || (s.habits && s.habits.logs && Object.keys(s.habits.logs).length)));
+  return personalDataScore(s) > 0;
+}
+function latestAssessmentFromHistory(source) {
+  const reports = ((source && source.history) || []).filter(x => x && x.type === 'report' && x.primary && CONSTITUTIONS[x.primary]);
+  let latest = null, latestTime = -Infinity, latestIndex = -1;
+  reports.forEach((item, index) => {
+    const stamp = +item.ts || Date.parse(item.at || '') || index;
+    if (stamp > latestTime || (stamp === latestTime && index > latestIndex)) {
+      latest = item; latestTime = stamp; latestIndex = index;
+    }
+  });
+  if (!latest) return null;
+  const data = latest.data || {};
+  return {
+    assessment: {
+      date: latest.at || data.date || todayKey(),
+      primary: latest.primary,
+      verdictText: data.verdictText || latest.title || CONSTITUTIONS[latest.primary].name,
+      summary: data.summary || '',
+      scores: data.scores && typeof data.scores === 'object' ? data.scores : {},
+      secondary: Array.isArray(data.secondary) ? data.secondary.filter(id => CONSTITUTIONS[id]) : [],
+      tendencies: Array.isArray(data.tendencies) ? data.tendencies.filter(id => CONSTITUTIONS[id]) : []
+    },
+    extra: data.extra && typeof data.extra === 'object' ? JSON.parse(JSON.stringify(data.extra)) : null
+  };
+}
+function restoreLatestAssessment(source) {
+  const latest = latestAssessmentFromHistory(source);
+  if (!latest) return false;
+  source.assessment = latest.assessment;
+  if (latest.extra) source.extra = latest.extra;
+  return true;
 }
 function mergeCloudState(local, remote) {
-  const out = JSON.parse(JSON.stringify(remote || DEFAULT_STATE));
-  const l = local || {};
-  out.user = l.user || out.user; out.owner = l.owner || out.owner; out.profile = Object.assign({}, out.profile || {}, l.profile || {});
-  const hist = [].concat(out.history || [], l.history || []), seen = {};
+  const l = local || {}, r = remote || {};
+  const localStamp = +l._updatedAt || 0, remoteStamp = +r._updatedAt || 0;
+  const localWins = localStamp > remoteStamp || (localStamp === remoteStamp && personalDataScore(l) > personalDataScore(r));
+  const newer = localWins ? l : r, older = localWins ? r : l;
+  const out = Object.assign(JSON.parse(JSON.stringify(DEFAULT_STATE)), JSON.parse(JSON.stringify(older || {})), JSON.parse(JSON.stringify(newer || {})));
+  out.profile = Object.assign({}, (older && older.profile) || {}, (newer && newer.profile) || {});
+  const hist = [].concat((newer && newer.history) || [], (older && older.history) || []), seen = {};
   out.history = hist.filter(x => x && x.id && !seen[x.id] && (seen[x.id] = true));
-  out.records = Object.assign({}, out.records || {}, l.records || {});
-  out.period = Object.assign({}, out.period || {}, l.period || {});
-  out.period.logs = Object.assign({}, (remote && remote.period && remote.period.logs) || {}, (l.period && l.period.logs) || {});
-  out.menuPicks = Object.assign({}, out.menuPicks || {}, l.menuPicks || {});
-  out.habits = Object.assign({}, out.habits || {}, l.habits || {});
-  out.habits.list = [].concat(out.habits.list || [], (l.habits && l.habits.list) || []).filter((x, i, a) => x && x.id && a.findIndex(y => y.id === x.id) === i);
-  out.habits.logs = Object.assign({}, (remote && remote.habits && remote.habits.logs) || {}, (l.habits && l.habits.logs) || {});
-  return Object.assign(JSON.parse(JSON.stringify(DEFAULT_STATE)), out);
+  out.records = Object.assign({}, (older && older.records) || {}, (newer && newer.records) || {});
+  out.period = Object.assign({}, (older && older.period) || {}, (newer && newer.period) || {});
+  out.period.logs = Object.assign({}, (older && older.period && older.period.logs) || {}, (newer && newer.period && newer.period.logs) || {});
+  out.menuPicks = Object.assign({}, (older && older.menuPicks) || {}, (newer && newer.menuPicks) || {});
+  out.habits = Object.assign({}, (older && older.habits) || {}, (newer && newer.habits) || {});
+  out.habits.list = [].concat((newer && newer.habits && newer.habits.list) || [], (older && older.habits && older.habits.list) || []).filter((x, i, a) => x && x.id && a.findIndex(y => y.id === x.id) === i);
+  out.habits.logs = Object.assign({}, (older && older.habits && older.habits.logs) || {}, (newer && newer.habits && newer.habits.logs) || {});
+  out.weight = Object.assign({}, (older && older.weight) || {}, (newer && newer.weight) || {});
+  out.diet = Object.assign({}, (older && older.diet) || {}, (newer && newer.diet) || {});
+  out._updatedAt = Math.max(localStamp, remoteStamp);
+  return out;
+}
+function reconcileCloudState(local, remote, currentId) {
+  const r = remote && typeof remote === 'object' ? remote : {};
+  if (r.owner && currentId && r.owner !== currentId) {
+    const err = new Error('云端数据归属异常，已停止覆盖本机数据');
+    err.code = 'state_owner_mismatch';
+    throw err;
+  }
+  const localSameAccount = !!(local && currentId && local.owner === currentId);
+  const base = localSameAccount && hasPersonalData(local) ? mergeCloudState(local, r) : Object.assign(JSON.parse(JSON.stringify(DEFAULT_STATE)), JSON.parse(JSON.stringify(r)));
+  base.owner = currentId || base.owner || '';
+  restoreLatestAssessment(base);
+  return base;
+}
+function applyCloudIdentity(target, activeUser, current) {
+  if (!target || !activeUser) return;
+  target.user = Object.assign({}, target.user || {}, activeUser);
+  target.owner = (current && current.id) || activeUser.id || target.owner || '';
+  target.profile = Object.assign({}, target.profile || {}, {
+    name: activeUser.name || (target.profile || {}).name || '',
+    gender: activeUser.gender === 'female' ? '女' : activeUser.gender === 'male' ? '男' : (target.profile || {}).gender || '',
+    age: activeUser.age ? String(activeUser.age) : (target.profile || {}).age || ''
+  });
+}
+function stateDataFingerprint(source) {
+  const s = source || {};
+  return JSON.stringify({
+    version: s.version || 1, profile: s.profile || {}, history: s.history || [], assessment: s.assessment || null,
+    plan: s.plan || null, habits: s.habits || {}, records: s.records || {}, weight: s.weight || {},
+    recipeSeed: s.recipeSeed || 0, menuPicks: s.menuPicks || {}, period: s.period || {}, diet: s.diet || {}
+  });
+}
+function claimLegacyLocalState(source, currentId, nickname) {
+  const local = JSON.parse(JSON.stringify(source || DEFAULT_STATE));
+  if (currentId && nickname && local.owner === nickname && local.owner !== currentId) local.owner = currentId;
+  return local;
 }
 async function hydrateCloudState(initialScroll) {
   if (!cloudUser() || typeof EYCloud === 'undefined') return;
+  const activeUser = state.user ? JSON.parse(JSON.stringify(state.user)) : null;
+  const currentAtStart = cloudUser();
+  const localBefore = claimLegacyLocalState(state, currentAtStart && currentAtStart.id, activeUser && activeUser.name);
   try {
+    const current = cloudUser();
     const row = await EYCloud.getState();
     if (row && row.state) {
-      const current = cloudUser();
-      const merged = current && state.owner === current.id && hasPersonalData(state) ? mergeCloudState(state, row.state) : row.state;
-      state = Object.assign(JSON.parse(JSON.stringify(DEFAULT_STATE)), merged);
+      const remoteBefore = Object.assign(JSON.parse(JSON.stringify(DEFAULT_STATE)), JSON.parse(JSON.stringify(row.state)));
+      state = reconcileCloudState(localBefore, row.state, current && current.id);
+      applyCloudIdentity(state, activeUser, current);
       CLOUD_SYNC.revision = +row.revision || 0;
-      save();
+      CLOUD_SYNC.ready = true;
+      save({ touch: false, cloud: false });
+      if (stateDataFingerprint(state) !== stateDataFingerprint(remoteBefore)) {
+        CLOUD_SYNC.dirty = true;
+        await saveCloudNow();
+      }
     } else {
+      state = reconcileCloudState(localBefore, {}, current && current.id);
+      applyCloudIdentity(state, activeUser, current);
       CLOUD_SYNC.revision = 0;
-      await EYCloud.putState(state, 0);
-      CLOUD_SYNC.revision = 1;
+      CLOUD_SYNC.ready = true;
+      save({ touch: false, cloud: false });
+      CLOUD_SYNC.dirty = true;
+      await saveCloudNow();
     }
     CLOUD_SYNC.ready = true;
     rebuildQuestions(); syncUserEntry();
     render(initialScroll == null ? { top: true } : { scroll: initialScroll });
-  } catch (e) { toast('云端数据暂时无法同步，请检查网络后重试'); }
+  } catch (e) {
+    const current = cloudUser();
+    if (current && localBefore.owner && localBefore.owner !== current.id) {
+      state = Object.assign(JSON.parse(JSON.stringify(DEFAULT_STATE)), { user: activeUser, owner: current.id });
+      applyCloudIdentity(state, activeUser, current);
+    }
+    toast(e && e.code === 'state_owner_mismatch' ? e.message : '云端数据暂时无法同步，请检查网络后重试');
+  }
 }
 function queueCloudSave() {
   if (!CLOUD_SYNC.ready || !cloudUser() || typeof EYCloud === 'undefined') return;
+  CLOUD_SYNC.dirty = true;
   clearTimeout(CLOUD_SYNC.timer);
   CLOUD_SYNC.timer = setTimeout(saveCloudNow, 500);
 }
 async function saveCloudNow() {
-  if (!CLOUD_SYNC.ready || !cloudUser() || typeof EYCloud === 'undefined' || CLOUD_SYNC.busy) return false;
+  if (!CLOUD_SYNC.ready || !cloudUser() || typeof EYCloud === 'undefined') return false;
+  if (CLOUD_SYNC.busy) { CLOUD_SYNC.dirty = true; return false; }
   CLOUD_SYNC.busy = true;
-  try { CLOUD_SYNC.revision = await EYCloud.putState(state, CLOUD_SYNC.revision); return true; }
-  catch (e) { toast('本次修改尚未同步到云端'); return false; }
+  try {
+    do {
+      CLOUD_SYNC.dirty = false;
+      const snapshot = JSON.parse(JSON.stringify(state));
+      CLOUD_SYNC.revision = await EYCloud.putState(snapshot, CLOUD_SYNC.revision);
+    } while (CLOUD_SYNC.dirty);
+    return true;
+  }
+  catch (e) { CLOUD_SYNC.dirty = true; toast('本次修改尚未同步到云端'); return false; }
   finally { CLOUD_SYNC.busy = false; }
 }
 async function flushCloudSave() {
   clearTimeout(CLOUD_SYNC.timer);
+  if (!CLOUD_SYNC.ready || !cloudUser() || typeof EYCloud === 'undefined') return false;
+  const wasBusy = CLOUD_SYNC.busy;
+  CLOUD_SYNC.dirty = true;
   for (let i = 0; CLOUD_SYNC.busy && i < 20; i++) await new Promise(resolve => setTimeout(resolve, 50));
+  if (CLOUD_SYNC.busy) return false;
+  if (wasBusy && !CLOUD_SYNC.dirty) return true;
   return saveCloudNow();
 }
 
@@ -274,12 +393,14 @@ function clearLoginMark() {
 
 /* 保存失败要让用户看见：否则「以为登录成功、下次打开却没有」无法解释 */
 let SAVE_WARN = '';
-function save() {
+function save(options) {
+  const opts = options || {};
   SAVE_WARN = '';
+  if (opts.touch !== false) state._updatedAt = Date.now();
   try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
   catch (e) { console.warn('保存失败', e); SAVE_WARN = 'local'; }
   if (isLogin()) writeLoginMark(state.user); else clearLoginMark();
-  queueCloudSave();
+  if (opts.cloud !== false) queueCloudSave();
 }
 
 /* 导入备份只接受应用导出的基本结构，并修复会进入 HTML 属性或数值运算的字段。 */
@@ -330,6 +451,47 @@ function normalizeImportedState(input) {
   if (next.weight.goal !== '' && !/^\d{1,3}(\.\d)?$/.test(String(next.weight.goal))) throw new Error('目标体重格式不正确');
   if (next.weight.form !== null && !isObject(next.weight.form)) throw new Error('体重表单格式不正确');
   return next;
+}
+
+/* 跨域旧站迁移：备份只补充当前账号的数据，绝不能替换已登录账号的身份与归属。 */
+function mergeImportedAccountState(currentState, input, currentId, activeUser) {
+  const imported = normalizeImportedState(input);
+  const skippedHistory = imported._importSkippedHistory || 0;
+  delete imported._importSkippedHistory;
+  const live = currentState || JSON.parse(JSON.stringify(DEFAULT_STATE));
+  const accountUser = activeUser || live.user || null;
+  const accountName = String((accountUser && accountUser.name) || '').trim();
+  const sameName = value => String(value || '').trim().toLocaleLowerCase() === accountName.toLocaleLowerCase();
+  const backupName = String((imported.user && imported.user.name) || (imported.profile && imported.profile.name) || '').trim();
+  const backupOwner = String(imported.owner || '').trim();
+  if (accountName && backupName && !sameName(backupName)) {
+    const err = new Error('备份属于其他账号，未执行导入'); err.code = 'import_account_mismatch'; throw err;
+  }
+  if (currentId && backupOwner && backupOwner !== currentId && !sameName(backupOwner)) {
+    const err = new Error('备份的数据归属与当前账号不一致，未执行导入'); err.code = 'import_owner_mismatch'; throw err;
+  }
+  const bound = JSON.parse(JSON.stringify(imported));
+  bound.owner = currentId || live.owner || accountName;
+  bound.user = accountUser ? JSON.parse(JSON.stringify(accountUser)) : null;
+  const merged = mergeCloudState(live, bound);
+  const unionText = (a, b) => Array.from(new Set([].concat(a || [], b || []).filter(x => typeof x === 'string' && x.trim())));
+  merged.diet = Object.assign({}, imported.diet || {}, live.diet || {}, merged.diet || {});
+  merged.diet.likes = unionText(live.diet && live.diet.likes, imported.diet && imported.diet.likes);
+  merged.diet.avoids = unionText(live.diet && live.diet.avoids, imported.diet && imported.diet.avoids);
+  merged.diet.chronic = unionText(live.diet && live.diet.chronic, imported.diet && imported.diet.chronic);
+  if (!merged.diet.avoidText && imported.diet) merged.diet.avoidText = imported.diet.avoidText || '';
+  if (!merged.profile.height && imported.profile) merged.profile.height = imported.profile.height || '';
+  if (!merged.weight.goal && imported.weight) merged.weight.goal = imported.weight.goal || '';
+  if (!merged.weight.plan && imported.weight) merged.weight.plan = imported.weight.plan || null;
+  if (!merged.assessment && imported.assessment) merged.assessment = imported.assessment;
+  if (!merged.plan && imported.plan) merged.plan = imported.plan;
+  merged.owner = currentId || live.owner || accountName;
+  merged.user = accountUser ? JSON.parse(JSON.stringify(accountUser)) : null;
+  if (accountUser) applyCloudIdentity(merged, accountUser, currentId ? { id: currentId } : null);
+  restoreLatestAssessment(merged);
+  merged._updatedAt = Date.now();
+  merged._importSkippedHistory = skippedHistory;
+  return merged;
 }
 
 function extraSafetyNotes(extra) {
@@ -1166,10 +1328,11 @@ function spInit() {
     rt = setTimeout(onResize, 260);
   });
 
-  window.addEventListener('pagehide', spStore);
-  window.addEventListener('beforeunload', spStore);
+  const persistCloudOnHide = () => { spStore(); if (CLOUD_SYNC.dirty) saveCloudNow(); };
+  window.addEventListener('pagehide', persistCloudOnHide);
+  window.addEventListener('beforeunload', persistCloudOnHide);
   if (document.addEventListener) {
-    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') spStore(); });
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') persistCloudOnHide(); });
   }
 }
 
@@ -3357,7 +3520,7 @@ async function submitCloudLogin() {
     ui.authBusy = true; renderModal();
     try {
       const data = await EYAuth.signInNickname(nickname, recoveryCode);
-      state.user = cloudIdentity(data, nickname); state.owner = state.user.id;
+      state.user = cloudIdentity(data, nickname);
       state.guestSkip = false; CLOUD_SYNC.ready = false;
       const profile = await EYCloud.getProfile();
       if (!profile || !profile.nickname) throw new Error('账号资料不存在或尚未完成初始化');
@@ -3380,7 +3543,7 @@ async function submitCloudLogin() {
   ui.authBusy = true; renderModal();
   try {
     const result = await EYAuth.signUpNickname(nickname, gender, age);
-    state.user = cloudIdentity({ user: result.user }, nickname); state.owner = state.user.id;
+    state.user = cloudIdentity({ user: result.user }, nickname);
     state.user.gender = gender; state.user.age = age;
     state.profile.name = nickname; state.profile.gender = gender === 'female' ? '女' : '男'; state.profile.age = String(age);
     state.guestSkip = false; CLOUD_SYNC.ready = false;
@@ -3677,7 +3840,7 @@ function bind() {
      一次点击被处理多次（多选反复开关、翻页一次跳多组、打卡点了没反应）。 */
   if (!app.dataset.bound) {
   app.dataset.bound = '1';
-    app.addEventListener('click', e => {
+    app.addEventListener('click', async e => {
       const el = e.target.closest('[data-action]');
       if (!el) return;
       const act = el.dataset.action;
@@ -3803,6 +3966,7 @@ function bind() {
         ui.retake = false;
         ui.assessStep = 0;
         save();
+        if (cloudOn() && !(await flushCloudSave())) toast('测评已保存在本机，但云端同步尚未完成，请保持网络后重试');
         go('plan');
         return;
       }
@@ -3823,7 +3987,9 @@ function bind() {
         if (!state.assessment) { go('assess'); return; }
         state.plan = { at: todayKey() };
         pushPlan(state.assessment); pushMenu(state.assessment);
-        save(); go('plan');
+        save();
+        if (cloudOn() && !(await flushCloudSave())) toast('方案已保存在本机，但云端同步尚未完成，请保持网络后重试');
+        go('plan');
         return;
       }
 
@@ -4161,15 +4327,24 @@ function bind() {
     if (!f) return;
     if (f.size > 10 * 1024 * 1024) { toast('备份文件不能超过 10 MB'); e.target.value = ''; return; }
     const rd = new FileReader();
-    rd.onload = () => {
+    rd.onload = async () => {
       try {
         const s = JSON.parse(rd.result);
-        state = normalizeImportedState(s);
-        const skippedHistory = state._importSkippedHistory || 0;
-        delete state._importSkippedHistory;
+        const account = cloudUser();
+        if (cloudOn() && !account) throw new Error('请先登录需要接收数据的账号，再执行导入');
+        const activeUser = state.user ? JSON.parse(JSON.stringify(state.user)) : null;
+        const merged = mergeImportedAccountState(state, s, (account && account.id) || state.owner || '', activeUser);
+        const skippedHistory = merged._importSkippedHistory || 0;
+        delete merged._importSkippedHistory;
+        if (!confirm('将把备份数据合并到当前账号。现有记录不会被整库替换，重复记录会自动去除。继续吗？')) { e.target.value = ''; return; }
+        exportJson('易安堂-导入前自动备份-' + todayKey() + '.json', state);
+        state = merged;
         rebuildQuestions(); syncUserEntry();
-        save(); render(); toast(skippedHistory ? '数据已导入，已跳过 ' + skippedHistory + ' 条无效历史记录' : '数据已导入');
-      } catch (err) { toast('备份格式或数据内容不正确，未导入'); }
+        save(); render();
+        const synced = !cloudOn() || await flushCloudSave();
+        const baseMsg = skippedHistory ? '数据已安全合并，已跳过 ' + skippedHistory + ' 条无效历史记录' : '数据已安全合并到当前账号';
+        toast(synced ? baseMsg : baseMsg + '；本机已保存，但云端同步尚未完成');
+      } catch (err) { toast(err && err.message ? err.message : '备份格式或数据内容不正确，未导入'); }
       e.target.value = '';
     };
     rd.readAsText(f);
@@ -4196,7 +4371,6 @@ async function bootCloudAuth(initialScroll) {
   const u = cloudUser();
   if (u) {
     state.user = cloudIdentity({ user: u });
-    state.owner = u.id || '';
     CLOUD_SYNC.ready = false;
     try {
       const profile = await EYCloud.getProfile();
