@@ -131,11 +131,15 @@
       if (e.status === 429 || (e.details && e.details.code === 'rate_limited')) {
         const limited = new Error('操作过于频繁，请 10 分钟后再试'); limited.code = 'rate_limited'; throw limited;
       }
+      if (e.details && e.details.code === 'origin_denied') {
+        const denied = new Error('当前网址未获注册权限，请使用网站最新地址'); denied.code = 'origin_denied'; throw denied;
+      }
       if (!e.status) {
         try {
           const data = await signInNickname(nickname, recoveryCode);
           return { user: data.user, recoveryCode: recoveryCode, preview: false };
         } catch (ignored) { /* 注册请求未成功，沿用原错误 */ }
+        const offline = new Error('无法连接账号服务，请检查网络后重试'); offline.code = 'network_error'; throw offline;
       }
       throw e;
     }

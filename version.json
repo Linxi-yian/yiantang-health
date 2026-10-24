@@ -1,6 +1,6 @@
 {
-  "version": "0.4.2",
-  "releasedAt": "2026-10-23",
-  "message": "旧站本地数据安全合并迁移与账号归属保护",
+  "version": "0.4.3",
+  "releasedAt": "2026-10-24",
+  "message": "修复新用户注册连接问题并优化错误提示",
   "schemaVersion": 2
 }
