@@ -94,6 +94,9 @@ let ui = {
   heatRange: 30,
   /* 经期：草稿表单（仅女性）与日历查看月份 */
   period: null, periodMonth: '', periodErr: '',
+  /* 身体档案：进入页面时仅今日记录与趋势默认展开；身体历史在今日记录内按需展开 */
+  archiveOpen: { record: true, trend: true, shape: false, weight: false, periodRecord: false, periodCalendar: false, tcm: false, wm: false },
+  archiveHistoryOpen: false,
   /* 登录弹窗：二次确认层是否展开；是否临时放行「未登录时关闭登录弹窗」 */
   loginAsk: false, allowCloseLogin: false,
   authMode: 'register', authBusy: false, authNotice: '', recovery: null,
@@ -1379,7 +1382,14 @@ function render(opts) {
   }
 }
 
-function go(page) { ui.page = page; render({ top: true }); }
+function go(page) {
+  if (page === 'archive' && ui.page !== 'archive') {
+    ui.archiveOpen = { record: true, trend: true, shape: false, weight: false, periodRecord: false, periodCalendar: false, tcm: false, wm: false };
+    ui.archiveHistoryOpen = false;
+  }
+  ui.page = page;
+  render({ top: true });
+}
 
 /* 首页：五大区块（体质测评 / 调理方案 / 习惯打卡 / 每日食谱 / 时令提示）
    体质测评与调理方案仅在此处入口，导航中不再单列 */
@@ -2302,7 +2312,7 @@ function wmProfileText() {
   L.push('【目标】目标体重：' + (state.weight.goal ? state.weight.goal + ' kg' : '请依据评估给出合理目标与周期') + '。');
   if (recent) L.push('【近期体重记录】' + recent + '。');
   if (habits) L.push('【当前习惯】' + habits + '。');
-  L.push('【诉求】请基于以上信息生成一份成人个体化体重管理方案：给出每日热量与三大营养素目标、分阶段（启动期/减脂期/维持期）计划、饮食与运动安排、每周执行清单、体重监测频率，以及需要就医或停止自行减重的安全边界。');
+  L.push('【诉求】请基于以上信息与目标方向生成一份成人个体化体重管理方案：先判断适合减脂减重、维持塑形还是增重增肌，再给出对应的每日热量与三大营养素目标、分阶段计划、饮食与运动安排、复盘频率，以及需要暂停方案并就医的安全边界。');
   return L.join('\n');
 }
 
@@ -2320,7 +2330,7 @@ function frag(x) {
 /* 体重方案中将日期、数值、单位和安全边界加粗，便于快速扫读。 */
 function wmEmphasis(text) {
   const safe = esc(text == null ? '' : String(text));
-  const important = /(\d{4}-\d{2}-\d{2}|(?:\d+(?:\.\d+)?\s*(?:→|至|–|-)\s*)?\d+(?:\.\d+)?\s*(?:kg|kcal|周|次|分钟|小时|天|ml|g|%)(?:以上|以内|左右)?|不推荐|停止自行减重并就医|请先咨询医师|不低于|不超过|健康下限|避免反弹)/g;
+  const important = /(\d{4}-\d{2}-\d{2}|(?:\d+(?:\.\d+)?\s*(?:→|至|–|-)\s*)?\d+(?:\.\d+)?\s*(?:kg|kcal|周|次|分钟|小时|天|ml|g|%)(?:以上|以内|左右)?|不推荐|停止当前方案并就医|停止训练并就医|请先咨询医师|不低于|不超过|健康下限|避免反弹)/g;
   return safe.replace(important, '<strong>$1</strong>');
 }
 /* 新版本地生成的方案（v:1）走结构化渲染；旧版导入的外部 JSON 走通用兜底 */
@@ -2435,23 +2445,32 @@ if (wmFormBase) wmForm = function () { return wmAutofillForm(wmFormBase.apply(th
 /* --- 身体档案页（原「身体记录」+「身材管理」合并为一个板块） --- */
 const ARCHIVE_METRIC = { weight: ['体重', 'kg'], sleep: ['睡眠时长', '小时'], energy: ['精力', '分'], mood: ['情绪', '分'] };
 
+function archivePanel(key, title, content) {
+  const open = !!(ui.archiveOpen && ui.archiveOpen[key]);
+  const bodyId = 'archivePanel-' + key;
+  return '<section class="panel archive-panel' + (open ? '' : ' is-collapsed') + '" data-archive-key="' + key + '">' +
+    '<div class="archive-panel-head"><h2>' + esc(title) + '</h2>' +
+    '<button type="button" class="archive-toggle" data-action="archive-toggle" data-key="' + key + '" aria-expanded="' + (open ? 'true' : 'false') + '" aria-controls="' + bodyId + '">' +
+    '<span>' + (open ? '收起' : '展开') + '</span><i aria-hidden="true"></i></button></div>' +
+    '<div class="archive-panel-body" id="' + bodyId + '"' + (open ? '' : ' hidden') + '>' + content + '</div></section>';
+}
+
 function viewArchive() {
   let h = '';
   if (ui.wmForm) ui.wmForm = wmAutofillForm(ui.wmForm);
   /* 记录与趋势纵向排列，各自占满可用宽度；表单本身在宽屏使用两列。 */
   h += '<div class="archive-stack">' +
-    '<section class="panel"><h2>今日身体记录</h2>' + archiveFormHtml() + '</section>' +
-    '<section class="panel"><h2>趋势追踪</h2>' + archiveTrendHtml() + '</section>' +
+    archivePanel('record', '今日身体记录', archiveFormHtml()) +
+    archivePanel('trend', '趋势追踪', archiveTrendHtml()) +
     '</div>';
   h += '<div class="archive-stack">' +
-    '<section class="panel"><h2>身材管理</h2>' + archiveShapeHtml() + '</section>' +
-    '<section class="panel"><h2>体重趋势</h2>' + archiveWeightTrendHtml() + '</section>' +
+    archivePanel('shape', '身材管理', archiveShapeHtml()) +
+    archivePanel('weight', '体重趋势', archiveWeightTrendHtml()) +
     '</div>';
   /* 经期模块位于「体重趋势」与「中医体质视角」之间，且仅女性用户可见 */
   if (isFemale()) h += periodSectionHtml();
-  h += '<section class="panel"><h2>中医体质视角下的体重管理</h2>' + archiveTcmHtml() + '</section>' +
-    '<section class="panel"><h2>体重管理 · 一键生成专业方案</h2>' + archiveWmHtml() + '</section>' +
-    '<section class="panel"><h2>历史记录</h2>' + archiveHistoryHtml() + '</section>';
+  h += archivePanel('tcm', '中医体质视角下的体重管理', archiveTcmHtml()) +
+    archivePanel('wm', '身材管理方案', archiveWmHtml());
   return h;
 }
 
@@ -2482,7 +2501,10 @@ function archiveFormHtml() {
     SYMPTOMS.map(s => '<button class="chip pickable' + ((r.symptoms || []).indexOf(s) > -1 ? ' on' : '') + '" data-action="symptom" data-v="' + s + '">' + s + '</button>').join('') +
     '</div></div>';
   h += '<label class="full">备注<textarea id="f_note" rows="2" placeholder="今日特殊感受、饮食异常、情绪事件等">' + esc(r.note || '') + '</textarea></label>';
-  h += '<div class="qfoot"><span></span><button class="btn" data-action="saverec">保存今日记录</button></div>';
+  h += '<div class="qfoot"><button type="button" class="btn small ghost" data-action="archive-history-toggle" aria-expanded="' + (ui.archiveHistoryOpen ? 'true' : 'false') + '" aria-controls="archiveRecordHistory">' +
+    (ui.archiveHistoryOpen ? '收起历史记录' : '查看历史记录') + '</button><button class="btn" data-action="saverec">保存今日记录</button></div>';
+  h += '<div class="archive-inline-history" id="archiveRecordHistory" aria-live="polite"' + (ui.archiveHistoryOpen ? '' : ' hidden') + '>' +
+    '<h3>历史身体记录</h3><div class="archive-history-scroll">' + archiveHistoryHtml() + '</div></div>';
   return h;
 }
 
@@ -2746,8 +2768,8 @@ function periodCalendarHtml() {
 /* 经期板块：记录与日历上下排列，各自使用完整页面宽度。 */
 function periodSectionHtml() {
   return '<div class="period-stack">' +
-    '<section class="panel"><h2>经期记录</h2>' + periodRecordHtml() + '</section>' +
-    '<section class="panel"><h2>经期日历</h2>' + periodCalendarHtml() + '</section>' +
+    archivePanel('periodRecord', '经期记录', periodRecordHtml()) +
+    archivePanel('periodCalendar', '经期日历', periodCalendarHtml()) +
     '</div>';
 }
 
@@ -2798,15 +2820,22 @@ function archiveTcmHtml() {
 }
 
 /* ================= 体重管理方案：页面内一步生成 =================
- * 热量：Mifflin-St Jeor 公式算基础代谢 × 活动系数 = 日常消耗；
- * 减重：每天约 500 kcal 缺口（≈ 每周 0.5 kg），但不低于基础代谢、不低于男 1500 / 女 1200 kcal；
- * 速度红线：每周体重变化控制在体重的 0.5%–1%（《中国成人超重和肥胖症预防控制指南》）。
+ * 体重分类：国家卫健委《体重管理指导原则（2024 年版）》成人 BMI 标准；
+ * 健康增重：NHS 建议在平衡膳食基础上每天增加约 300–500 kcal，并配合力量训练；
+ * 增肌训练：CDC / ACSM 建议每周至少 2 天肌力训练；训练人群蛋白质按 1.4–2.0 g/kg/天范围取中值；
+ * 减重：每天约 500 kcal 缺口，但不低于基础代谢、不低于男 1500 / 女 1200 kcal。
  */
 const WM_ACTIVITY = [
   { id: 'sed', label: '久坐：办公室为主，几乎不运动', f: 1.2 },
   { id: 'light', label: '轻度活跃：每周 1–3 次轻量活动', f: 1.375 },
   { id: 'mod', label: '中度活跃：每周 3–5 次中等强度运动', f: 1.55 },
   { id: 'high', label: '高度活跃：体力工作或几乎天天训练', f: 1.725 }
+];
+const WM_GOALS = [
+  { id: 'auto', label: '自动判断（按当前与目标体重）' },
+  { id: 'lose', label: '减脂减重' },
+  { id: 'keep', label: '维持塑形' },
+  { id: 'muscle', label: '增重增肌' }
 ];
 const WM_DAYS = ['0 天：先从日常活动开始', '1 天', '2 天', '3 天', '4 天', '5 天', '6 天', '7 天'];
 const WM_LIKES = ['清淡少油', '无肉不欢', '主食偏多', '甜饮奶茶', '重口味偏咸', '夜宵习惯', '素食为主', '外卖为主'];
@@ -2844,7 +2873,7 @@ function wmDefaultForm() {
     height: state.profile.height ? String(state.profile.height) : '',
     weight: last ? last.kg.toFixed(1) : '',
     target: state.weight.goal ? String(state.weight.goal) : '',
-    activity: 'sed', days: '3',
+    goalMode: 'auto', activity: 'sed', days: '3',
     likes: [], avoids: [], avoidText: ''
   };
 }
@@ -2857,6 +2886,7 @@ function wmForm() {
   return ui.wmForm;
 }
 function wmAct(id) { return WM_ACTIVITY.filter(a => a.id === id)[0] || WM_ACTIVITY[0]; }
+function wmGoal(id) { return WM_GOALS.some(g => g.id === id) ? id : 'auto'; }
 /* 用户一改输入就撤掉上一次的报错提示，避免提示与当前内容不符 */
 function wmClearErr() {
   if (!ui.wmErr && !ui.wmBad && !ui.wmStateErr) return;
@@ -2909,13 +2939,23 @@ function wmValidate(f) {
   if (tb >= 28) {
     return { ok: false, id: 'wm_target', msg: '目标体重对应的 BMI 为 ' + tb.toFixed(1) + '，仍在肥胖区间；建议先定到 ' + (23.9 * (h / 100) * (h / 100)).toFixed(1) + ' kg（BMI 正常上限）左右。' };
   }
+  const goalMode = wmGoal(f.goalMode);
+  if (goalMode === 'lose' && t >= w - 0.5) {
+    return { ok: false, id: 'wm_target', msg: '你选择了“减脂减重”，目标体重应低于当前体重至少 0.5 kg；如希望体重不变，请改选“维持塑形”。' };
+  }
+  if (goalMode === 'keep' && Math.abs(t - w) >= 0.5) {
+    return { ok: false, id: 'wm_target', msg: '你选择了“维持塑形”，目标体重应与当前体重接近（相差小于 0.5 kg）。' };
+  }
+  if (goalMode === 'muscle' && t < w - 0.5) {
+    return { ok: false, id: 'wm_target', msg: '你选择了“增重增肌”，目标体重不应低于当前体重；如要减脂，请改选“减脂减重”。' };
+  }
   if (!WM_ACTIVITY.some(a => a.id === f.activity)) return { ok: false, id: 'wm_activity', msg: '请选择日常活动量，用于估算每日消耗。' };
   const d = inRange(f.days, 0, 7);
   if (!isFinite(d)) return { ok: false, id: 'wm_days', msg: '请选择每周能安排的运动天数（0–7 天）。' };
   return {
     ok: true,
     form: {
-      gender: f.gender, age: Math.round(age), height: h, weight: w, target: t,
+      gender: f.gender, age: Math.round(age), height: h, weight: w, target: t, goalMode: goalMode,
       activity: f.activity, days: Math.round(d),
       likes: (f.likes || []).slice(), avoids: (f.avoids || []).slice(),
       avoidText: String(f.avoidText || '').trim()
@@ -2939,7 +2979,11 @@ function buildWeightPlan(f) {
   const bmr = Math.round(10 * w + 6.25 * h - 5 * age + (male ? 5 : -161));
   const tdee = Math.round(bmr * act.f);
   const diff = Math.round((tgt - w) * 10) / 10;
-  const mode = diff <= -0.5 ? 'lose' : (diff >= 0.5 ? 'gain' : 'keep');
+  const goalMode = wmGoal(f.goalMode);
+  const inferred = diff <= -0.5 ? 'lose' : (diff >= 0.5 ? 'muscle' : 'keep');
+  const intent = goalMode === 'auto' ? inferred : goalMode;
+  const mode = intent === 'lose' ? 'lose' : (intent === 'muscle' && diff >= 0.5 ? 'gain' : 'keep');
+  const muscleFocus = intent === 'muscle';
 
   const floorKcal = male ? 1500 : 1200;
   let kcal = tdee, slowNote = '';
@@ -2950,7 +2994,7 @@ function buildWeightPlan(f) {
   } else if (mode === 'gain') { kcal = Math.round(tdee + 350); }
 
   const refW = mode === 'lose' ? tgt : w;
-  const protein = Math.round(refW * (mode === 'lose' ? 1.5 : 1.2));
+  const protein = Math.round(refW * (muscleFocus ? 1.6 : (mode === 'lose' ? 1.5 : 1.2)));
   const fat = Math.round(kcal * 0.27 / 9);
   const carb = Math.max(60, Math.round((kcal - protein * 4 - fat * 9) / 4));
   const perWeek = mode === 'lose' ? Math.min(0.5, Math.max(0.25, Math.round(w * 0.0075 * 10) / 10)) : 0.25;
@@ -2960,10 +3004,18 @@ function buildWeightPlan(f) {
   const s1 = 2, s3 = weeks >= 8 ? 4 : (weeks >= 6 ? 2 : 0), s2 = Math.max(1, weeks - s1 - s3);
   const stageN = [s1, s2, s3];
   const stageName = ['启动期', '推进期', '巩固期'];
-  const stageText = [
+  const stageText = mode === 'lose' ? [
     '先用两周把三餐时间、份量和称重习惯固定下来，运动量维持原样，别一上来又少吃又猛练。',
-    '按上面的热量与运动安排执行，每周复盘一次：体重看两周平均，体型看腰围，状态看精力与睡眠。',
+    '按热量缺口与运动安排执行，每周复盘一次：体重看两周平均，体型看腰围，状态看精力与睡眠。',
     '把每日热量回调 100–200 kcal 到维持水平，体重稳定 4 周以上再考虑下一轮，避免反弹。'
+  ] : muscleFocus ? [
+    '先用两周固定三餐与加餐、补足蛋白质，并熟悉力量动作；不要靠甜饮、油炸食品突击增重。',
+    '按目标热量执行，力量训练逐步增加次数或阻力；每 2–4 周结合体重、腰围和训练表现复盘一次。',
+    '达到目标后把热量逐步调回维持水平，继续力量训练 4 周以上，让新增体重更稳定。'
+  ] : [
+    '先用两周固定三餐、睡眠与称重条件，记录体重和腰围的自然波动。',
+    '热量保持在日常消耗附近，以力量训练和规律活动改善体型；每两周看一次平均趋势。',
+    '维持当前饮食与活动节奏，若体重连续两周偏离目标，再小幅调整每日 100–200 kcal。'
   ];
   const stages = [];
   for (let i = 0; i < 3; i++) {
@@ -2972,30 +3024,51 @@ function buildWeightPlan(f) {
     stages.push({ name: stageName[i] + '（第 ' + from + '–' + (from + stageN[i] - 1) + ' 周）', text: stageText[i] });
   }
 
-  const mKcal = [Math.round(kcal * 0.3 / 10) * 10, Math.round(kcal * 0.4 / 10) * 10, Math.round(kcal * 0.3 / 10) * 10];
+  const mealRatio = mode === 'gain' ? [0.25, 0.35, 0.3] : [0.3, 0.4, 0.3];
+  const mKcal = mealRatio.map(r => Math.round(kcal * r / 10) * 10);
   const headLine = '每日目标约 ' + kcal + ' kcal（基础代谢 ' + bmr + ' × 活动系数 ' + act.f + '，日常消耗约 ' + tdee + ' kcal）' +
     (mode === 'lose' ? '，相当于每天留出约 500 kcal 缺口。' : mode === 'gain' ? '，相当于每天多摄入约 350 kcal。' : '，吃到消耗量即可维持目前体重。');
   const diet = [];
   diet.push({
     t: '每天吃多少', l: [headLine].concat([
-      '三餐分配：早餐约 ' + mKcal[0] + ' kcal、午餐约 ' + mKcal[1] + ' kcal、晚餐约 ' + mKcal[2] + ' kcal；加餐放在上午或下午，别留到睡前。'
+      '三餐分配：早餐约 ' + mKcal[0] + ' kcal、午餐约 ' + mKcal[1] + ' kcal、晚餐约 ' + mKcal[2] + ' kcal；' +
+      (mode === 'gain' ? '其余约 10% 安排为 1–2 次加餐，放在两餐之间或训练后。' : '加餐放在上午或下午，尽量别留到睡前。')
     ]).concat(slowNote ? [slowNote] : [])
   });
-  diet.push({
-    t: '每餐怎么搭', l: [
-      '早餐：一份蛋白（鸡蛋 1–2 个 / 无糖豆浆 250 ml）+ 一份主食（燕麦、全麦面包或杂粮粥）+ 一份蔬果。',
-      '午餐：半盘蔬菜 + 一掌心蛋白（瘦肉、鱼虾、禽肉或豆制品）+ 一拳主食（粗细粮各半）。',
-      '晚餐：蔬菜为主 + 半掌心蛋白 + 半拳主食，尽量在睡前 3 小时吃完。',
-      '每天烹饪油控制在 2–3 白瓷勺（约 25–30 g），盐不超过 5 g；先吃菜和蛋白、最后吃主食，更耐饿。'
-    ]
-  });
+  const mealGuide = mode === 'gain' ? [
+    '早餐：蛋奶或豆制品 + 足量主食 + 一份蔬果；吃不下大份量时，可拆成早餐和上午加餐。',
+    '午餐和晚餐：每餐保证一掌心蛋白、一拳以上主食和蔬菜，不要为了“清淡”把主食与脂肪一起砍掉。',
+    '加餐优先牛奶 / 无糖酸奶、鸡蛋、全麦面包、坚果或豆制品；有忌口时按下方替换建议执行。',
+    '每日额外热量来自营养密度高的正常食物，不靠奶茶、蛋糕和油炸食品凑热量。'
+  ] : muscleFocus ? [
+    '三餐都安排蛋白质，训练前后的一餐同时保留主食，帮助训练与恢复。',
+    '每餐以蔬菜、优质蛋白和粗细搭配主食为基础，不用极端低碳，也不用额外堆高热量。',
+    '训练后 2 小时内正常吃一餐；来不及正餐时，可先用奶 / 豆浆搭配鸡蛋或全麦面包。',
+    '体重保持稳定的同时，若训练重量或次数提高、腰围不快速增加，就说明方向基本合适。'
+  ] : [
+    '早餐：一份蛋白（鸡蛋 1–2 个 / 无糖豆浆 250 ml）+ 一份主食（燕麦、全麦面包或杂粮粥）+ 一份蔬果。',
+    '午餐：半盘蔬菜 + 一掌心蛋白（瘦肉、鱼虾、禽肉或豆制品）+ 一拳主食（粗细粮各半）。',
+    '晚餐：蔬菜为主 + 半掌心蛋白 + 半拳主食，尽量在睡前 3 小时吃完。',
+    '每天烹饪油控制在 2–3 白瓷勺（约 25–30 g），盐不超过 5 g；先吃菜和蛋白、最后吃主食，更耐饿。'
+  ];
+  diet.push({ t: '每餐怎么搭', l: mealGuide });
   diet.push({
     t: '三大营养素', l: [
-      '蛋白质约 ' + protein + ' g/天（减重期尤其不能少，用来护住肌肉）、脂肪约 ' + fat + ' g/天、碳水约 ' + carb + ' g/天。',
+      '蛋白质约 ' + protein + ' g/天（' + (muscleFocus ? '按约 1.6 g/kg 计算，分到三餐与加餐' : mode === 'lose' ? '减重期用来保护肌肉' : '用于日常维持与恢复') + '）、脂肪约 ' + fat + ' g/天、碳水约 ' + carb + ' g/天。',
       '蛋白来源优先：鱼虾、鸡胸、瘦牛猪、蛋、豆制品、低脂奶；每天饮水 1500–2000 ml。'
     ]
   });
-  const likeTips = (f.likes || []).map(x => WM_LIKE_TIP[x]).filter(Boolean);
+  const muscleLikeTip = {
+    '清淡少油': '保持清淡，同时用奶 / 豆浆、鸡蛋、全谷主食和适量植物油补足能量与蛋白质。',
+    '无肉不欢': '优先鱼虾、禽肉和瘦肉，分散到三餐；不要用肥肉和加工肉代替增肌所需的优质蛋白。',
+    '主食偏多': '把主食均匀分到三餐和训练前后，并确保每餐同时有蛋白质，避免只吃主食。',
+    '甜饮奶茶': '增重也不靠奶茶和甜饮；优先牛奶、无糖酸奶、豆浆等同时提供蛋白质的饮品。',
+    '重口味偏咸': WM_LIKE_TIP['重口味偏咸'],
+    '夜宵习惯': '若晚间训练后饥饿，可在睡前 1–2 小时加一份奶 / 豆浆配鸡蛋或全麦面包，避免油炸夜宵。',
+    '素食为主': '用豆制品、蛋奶、豆类与全谷组合补足蛋白质；严格素食者注意维生素 B12、铁和钙。',
+    '外卖为主': '每餐主动加一份蛋白和主食，少选只有蔬菜的轻食；酱汁仍分开放，避免靠油盐凑热量。'
+  };
+  const likeTips = (f.likes || []).map(x => (muscleFocus ? muscleLikeTip[x] : WM_LIKE_TIP[x])).filter(Boolean);
   diet.push({
     t: '按你的偏好调整',
     l: likeTips.length ? likeTips : ['没有勾选偏好，先按上面的通用搭配吃一周，再回来补充偏好，方案会更贴合。']
@@ -3012,6 +3085,12 @@ function buildWeightPlan(f) {
   if (days <= 0) {
     ex.push('这一阶段先不安排专门训练：每餐后散步 10–15 分钟，目标每天 7000 步左右。');
     ex.push('两周后若能腾出时间，把「每周可运动天数」改到 2–3 天再生成一次，方案会自动加上训练安排。');
+  } else if (muscleFocus) {
+    ex.push('力量训练 ' + Math.min(days, 3) + ' 次/周，每次约 30–45 分钟：深蹲、髋铰链、推、拉与核心动作覆盖主要肌群。');
+    if (days === 1) ex.push('你目前只能安排 1 天，先把这一次练完整；条件允许后逐步增加到每周至少 2 天。');
+    ex.push('每个动作先做 2–3 组，每组保留 2–3 次余力；动作稳定后再逐步增加次数、阻力或重量。');
+    if (days >= 3) ex.push('另安排 1–2 次 20–30 分钟轻中等强度有氧，帮助心肺恢复，不用追求大量消耗。');
+    ex.push('相同肌群训练间隔至少 48 小时；疼痛、动作明显变形或恢复不足时，先减量而不是硬撑。');
   } else {
     ex.push('有氧 ' + Math.min(days, 4) + ' 次/周，每次 30–45 分钟：快走、慢跑、骑车、游泳任选，强度以「能说话但不能唱歌」为准。');
     if (days >= 3) ex.push('力量训练 2 次/周，每次约 20 分钟：深蹲、箭步蹲、俯卧撑（或弹力带划船）、平板支撑各 2–3 组，用来保住肌肉。');
@@ -3023,36 +3102,52 @@ function buildWeightPlan(f) {
 
   const caution = [
     '称重方式：每周固定 2–3 次，晨起空腹、如厕后、用同一台秤；看两周的平均趋势，别被单日波动影响。',
-    '速度红线：每周体重变化控制在 ' + (Math.round(w * 0.005 * 10) / 10) + '–' + (Math.round(w * 0.01 * 10) / 10) + ' kg，掉得太快多半是水分与肌肉，反弹风险高。',
-    '每天睡够 7 小时；睡眠不足会明显增加饥饿感，是减重失败最常见的原因之一。',
-    '不推荐：全天断食、用代餐替代全部正餐、泻药或利尿剂、每天低于 1000 kcal 的极端节食。',
+    mode === 'lose'
+      ? '减重节奏：每周体重下降控制在 ' + (Math.round(w * 0.005 * 10) / 10) + '–' + (Math.round(w * 0.01 * 10) / 10) + ' kg；下降过快多半伴随水分与肌肉流失，反弹风险更高。'
+      : muscleFocus
+        ? '增肌判断：每 2–4 周一起看平均体重、腰围和训练重量 / 次数；若腰围快速增加而力量没有进步，先把每日热量下调 100–200 kcal。'
+        : '维持判断：允许日常水分造成的小幅波动；若两周平均体重持续偏离目标，再把每日热量调整 100–200 kcal。',
+    '每天睡够 7 小时；睡眠不足会影响食欲调节、训练恢复与体重管理效果。',
+    mode === 'lose'
+      ? '不推荐：全天断食、用代餐替代全部正餐、泻药或利尿剂、每天低于 1000 kcal 的极端节食。'
+      : muscleFocus
+        ? '不推荐：靠奶茶、蛋糕和油炸食品突击增重，盲目使用增肌粉或来路不明的激素类产品。'
+        : '不推荐：因单日体重变化突然节食或暴食，也不要用泻药、利尿剂干预体重。',
     '本方案按健康成人（14–100 岁）的一般原则生成，是养生参考，不替代医师诊疗。'
   ];
-  if (band.label === '偏瘦') caution.unshift('你当前 BMI 为 ' + bmi.toFixed(1) + '（偏瘦），本方案以增重或维持为主，不建议继续减重。');
+  if (band.label === '偏瘦') caution.unshift('你当前 BMI 为 ' + bmi.toFixed(1) + '（偏瘦），本方案以健康增重和增肌为主，不建议继续减重；若近期非主动变瘦，请先就医排查原因。');
   if (tband.label === '超重') caution.unshift('目标体重对应 BMI 仍偏高，建议先把阶段性目标定到健康区间（' + rng[0].toFixed(1) + '–' + rng[1].toFixed(1) + ' kg）以内。');
-  const safety = '出现以下任一情况，请停止自行减重并就医：头晕心慌、' + (isFemale() ? '月经紊乱' : '内分泌失调') +
-    '、持续乏力、明显脱发、失眠加重。孕期 / 哺乳期、BMI < 18.5、糖尿病或高血压等慢病、正在服药者，请先咨询医师再执行。';
+  const safetyLead = mode === 'lose'
+    ? '出现头晕心慌、持续乏力、明显脱发、失眠加重或' + (isFemale() ? '月经紊乱' : '内分泌异常') + '，请停止当前方案并就医。'
+    : muscleFocus
+      ? '出现胸痛、晕厥、异常气短、关节锐痛，或体重在短期内异常快速变化，请停止训练并就医。'
+      : '出现头晕心慌、持续乏力、食欲明显改变或体重无明显原因持续变化，请停止当前方案并就医。';
+  const safety = safetyLead + ' 孕期 / 哺乳期、BMI < 18.5、糖尿病或高血压等慢病、肾功能异常或正在服药者，请先咨询医师再执行。';
 
   const metrics = [
     { k: '当前 BMI', v: bmi.toFixed(1), n: band.label },
     { k: '每日热量', v: kcal + '', n: 'kcal' },
     { k: mode === 'lose' ? '需要减' : mode === 'gain' ? '需要增' : '维持', v: Math.abs(diff).toFixed(1) + ' kg', n: mode === 'keep' ? '体重不变' : '约 ' + weeks + ' 周' },
-    { k: '每周速度', v: (mode === 'lose' ? '−' : '+') + perWeek.toFixed(2) + ' kg', n: '建议区间' },
+    mode === 'lose'
+      ? { k: '每周速度', v: '−' + perWeek.toFixed(2) + ' kg', n: '建议上限' }
+      : { k: '复盘周期', v: muscleFocus ? '2–4 周' : '2 周', n: muscleFocus ? '体重 + 腰围 + 力量' : '看平均趋势' },
     { k: '蛋白质', v: protein + ' g', n: '每天' },
     { k: '目标 BMI', v: tbmi.toFixed(1), n: tband.label }
   ];
-  const title = mode === 'keep'
-    ? '体重管理方案 · 维持 ' + w.toFixed(1) + ' kg（' + weeks + ' 周）'
-    : '体重管理方案 · ' + w.toFixed(1) + ' → ' + tgt.toFixed(1) + ' kg（约 ' + weeks + ' 周）';
+  const title = muscleFocus
+    ? '增重增肌方案 · ' + w.toFixed(1) + (mode === 'gain' ? ' → ' + tgt.toFixed(1) + ' kg' : ' kg 附近塑形') + '（约 ' + weeks + ' 周）'
+    : mode === 'keep'
+      ? '维持塑形方案 · 维持 ' + w.toFixed(1) + ' kg（' + weeks + ' 周）'
+      : '减脂减重方案 · ' + w.toFixed(1) + ' → ' + tgt.toFixed(1) + ' kg（约 ' + weeks + ' 周）';
 
   return {
-    v: 1, at: todayKey(), ts: Date.now(), mode: mode, title: title, weeks: weeks,
+    v: 1, at: todayKey(), ts: Date.now(), mode: mode, intent: intent, title: title, weeks: weeks,
     summary: { bmi: bmi, band: band.label, kcal: kcal, weeks: weeks, delta: diff, current: w, target: tgt },
     metrics: metrics, stages: stages, diet: diet, exercise: ex, caution: caution, safety: safety,
     /* 三大营养素目标（g/天），供每日食谱换算营养比例 */
     nutri: { kcal: kcal, protein: protein, fat: fat, carb: carb },
     form: {
-      gender: f.gender, age: age, height: h, weight: w, target: tgt,
+      gender: f.gender, age: age, height: h, weight: w, target: tgt, goalMode: goalMode,
       activity: act.id, activityLabel: act.label, days: days,
       likes: (f.likes || []).slice(), avoids: (f.avoids || []).slice(), avoidText: f.avoidText || ''
     },
@@ -3090,6 +3185,9 @@ function archiveWmHtml() {
     '<label class="fm-row"><span>身高</span><input type="number" step="0.5" id="wm_height" class="wminput' + bc('wm_height') + '" data-f="height" value="' + esc(f.height) + '" placeholder="cm，例：168"></label>' +
     '<label class="fm-row"><span>当前体重</span><input type="number" step="0.1" id="wm_weight" class="wminput' + bc('wm_weight') + '" data-f="weight" value="' + esc(f.weight) + '" placeholder="kg，例：62.5"></label>' +
     '<label class="fm-row"><span>目标体重</span><input type="number" step="0.1" id="wm_target" class="wminput' + bc('wm_target') + '" data-f="target" value="' + esc(f.target) + '" placeholder="kg，例：58"></label>' +
+    '<label class="fm-row"><span>管理方向</span><select id="wm_goalMode" class="wminput' + bc('wm_goalMode') + '" data-f="goalMode">' +
+    WM_GOALS.map(g => '<option value="' + g.id + '"' + (wmGoal(f.goalMode) === g.id ? ' selected' : '') + '>' + esc(g.label) + '</option>').join('') +
+    '</select></label>' +
     '<label class="fm-row"><span>活动量</span><select id="wm_activity" class="wminput' + bc('wm_activity') + '" data-f="activity">' +
     WM_ACTIVITY.map(a => '<option value="' + a.id + '"' + (f.activity === a.id ? ' selected' : '') + '>' + esc(a.label) + '</option>').join('') +
     '</select></label>' +
@@ -3141,7 +3239,7 @@ function wmGenerate() {
   const read = id => { const el = $('#' + id); return el ? el.value : ''; };
   const draft = {
     gender: f.gender, age: read('wm_age'), height: read('wm_height'), weight: read('wm_weight'),
-    target: read('wm_target'), activity: read('wm_activity'), days: read('wm_days'),
+    target: read('wm_target'), goalMode: read('wm_goalMode'), activity: read('wm_activity'), days: read('wm_days'),
     likes: f.likes || [], avoids: f.avoids || [], avoidText: read('wm_avoidText')
   };
   const v = wmValidate(draft);
@@ -3844,6 +3942,30 @@ function bind() {
       const el = e.target.closest('[data-action]');
       if (!el) return;
       const act = el.dataset.action;
+
+      if (act === 'archive-toggle') {
+        const key = el.dataset.key;
+        if (!ui.archiveOpen) ui.archiveOpen = {};
+        const open = !ui.archiveOpen[key];
+        ui.archiveOpen[key] = open;
+        const panel = el.closest('.archive-panel');
+        const body = panel ? $('.archive-panel-body', panel) : null;
+        if (panel) panel.classList.toggle('is-collapsed', !open);
+        if (body) body.hidden = !open;
+        el.setAttribute('aria-expanded', open ? 'true' : 'false');
+        const label = $('span', el);
+        if (label) label.textContent = open ? '收起' : '展开';
+        return;
+      }
+
+      if (act === 'archive-history-toggle') {
+        ui.archiveHistoryOpen = !ui.archiveHistoryOpen;
+        const history = $('#archiveRecordHistory', app);
+        if (history) history.hidden = !ui.archiveHistoryOpen;
+        el.setAttribute('aria-expanded', ui.archiveHistoryOpen ? 'true' : 'false');
+        el.textContent = ui.archiveHistoryOpen ? '收起历史记录' : '查看历史记录';
+        return;
+      }
 
       if (act === 'go') { go(el.dataset.page); return; }
 
