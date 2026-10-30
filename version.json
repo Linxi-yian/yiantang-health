@@ -1,6 +1,6 @@
 {
-  "version": "0.4.4",
-  "releasedAt": "2026-10-26",
-  "message": "体重方案自适应与身体档案折叠优化",
+  "version": "0.4.5",
+  "releasedAt": "2026-10-30",
+  "message": "修复宽屏折叠板块隐藏状态失效",
   "schemaVersion": 2
 }

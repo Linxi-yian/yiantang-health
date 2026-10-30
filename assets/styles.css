@@ -21,6 +21,10 @@
 
 * { box-sizing: border-box; }
 
+/* hidden 是所有折叠、弹窗和校验提示的最终可见性开关。
+   使用 !important 防止后续响应式 display 规则把隐藏内容重新显示出来。 */
+[hidden] { display: none !important; }
+
 /* 关闭浏览器自带的滚动锚定（scroll anchoring）：
    重排或视口 / 横竖屏变化时，浏览器会自行改写 scrollY 以「保持视觉稳定」，
    会把页面内保存的滚动位置冲掉（实测 600 → 301）。关掉后位置由应用统一控制。 */
@@ -984,7 +988,7 @@ code {
   .habit-body { min-width: 0; }
   .habit-body > b,
   .habit-body > p { white-space: nowrap; }
-  .archive-panel-body:has(.pd-field) {
+  .archive-panel-body:not([hidden]):has(.pd-field) {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     column-gap: 24px;
