@@ -677,6 +677,35 @@ function doneRate(key) {
   return (state.habits.logs[key] || []).length / list.length;
 }
 
+/* 每日鼓励语：按日期稳定轮换，同一天刷新不变，次日自动更新。 */
+const DAILY_ENCOURAGEMENTS = [
+  '今天完成一点，明天就多一份从容。',
+  '不必追求完美，持续行动就是进步。',
+  '照顾好今天的自己，就是在为未来积蓄力量。',
+  '每一次打卡，都是对健康生活的认真回应。',
+  '把小事坚持下来，时间会给出答案。',
+  '状态有起伏没关系，愿意继续就很了不起。',
+  '稳稳走好今天这一步，改变正在发生。',
+  '健康不是冲刺，而是每天温柔地坚持。',
+  '为自己完成一件小事，也值得肯定。',
+  '今天的自律，会成为明天的底气。',
+  '慢一点也没关系，方向正确就会抵达。',
+  '认真生活的每一天，都在悄悄塑造更好的你。',
+  '先完成，再完善；先行动，再等待结果。',
+  '积累看似微小，坚持终会带来明显变化。',
+  '给身体一点耐心，也给自己一句肯定。',
+  '能坚持到今天，本身就是一份成绩。',
+  '今天照顾好身体，明天才能走得更远。',
+  '保持自己的节奏，稳定比速度更重要。',
+  '每个认真完成的当下，都算数。',
+  '愿你带着轻松的心情，完成今天的小目标。',
+  '再小的好习惯，也会在时间里生长。'
+];
+function dailyEncouragement(key) {
+  const d = parseKey(key || todayKey());
+  return DAILY_ENCOURAGEMENTS[(dayOfYear(d) - 1) % DAILY_ENCOURAGEMENTS.length];
+}
+
 /* ---------------- 食谱 ----------------
  * 五个推荐位：早 / 午 / 晚 / 茶 / 果
  * 每一位可单独「换一换」，只改动该位的序号，其余位不受影响
@@ -696,10 +725,14 @@ function isColdFood(name) {
   for (let i = 0; i < COLD_FOOD_KEYS.length; i++) if (s.indexOf(COLD_FOOD_KEYS[i]) > -1) return true;
   return false;
 }
-/* 一周内同一道餐食最多出现 2 次；候选池低于此值时该上限可能无法同时满足，
-   因此在筛选后会自动从通用菜池补齐到 MIN_POOL（= ceil(7 / 2)） */
+/* 配餐按 14 天窗口规划：早 / 午 / 晚尽量不重复，茶饮和水果最多出现 2 次。
+   忌口等限制使候选不足时保留最接近项，并给出可见说明。 */
 const MAX_DISH_PER_WEEK = 2;
+const MENU_PLAN_DAYS = 14;
 const MIN_POOL = 4;
+function maxDishRepeat(slotKey) {
+  return (slotKey === 'breakfast' || slotKey === 'lunch' || slotKey === 'dinner') ? 1 : 2;
+}
 
 /* ---------------- 食材解析 ----------------
  * 从菜名里解析出食材（长词优先、已命中区间不重复计入），供同日去重使用
@@ -962,10 +995,11 @@ function dayPlan(cid, key, dishCount) {
     list.sort((a, b) => (a.pick - b.pick) || (a.cnt - b.cnt) || (b.boost - a.boost) || (a.mUsed - b.mUsed) || (a.dist - b.dist));
 
     let chosen = null, forced = null, methodClash = null;
+    const maxRepeat = maxDishRepeat(s.key);
     /* 第一轮优先「当日还没用过的烹饪方式」，第二轮放宽，保证做法不单一又不至于选不出菜 */
     for (let i = 0; i < list.length; i++) {
       const c = list[i];
-      if (c.cnt >= MAX_DISH_PER_WEEK) { if (!forced) forced = { c: c, why: 'week' }; continue; }
+      if (c.cnt >= maxRepeat) { if (!forced) forced = { c: c, why: 'window' }; continue; }
       const rs = resolveItem(c.it, used, noCold, ban);
       if (!rs) { if (!forced) forced = { c: c, why: 'ing' }; continue; }
       if (!c.mUsed) { chosen = { it: rs.it, idx: c.idx, swapped: rs.swapped }; break; }
@@ -975,8 +1009,8 @@ function dayPlan(cid, key, dishCount) {
     if (!chosen) {
       const fb = forced || { c: list[0], why: 'ing' };
       const sub = substituteItem(fb.c.it, used, noCold, ban);
-      const note = fb.why === 'week'
-        ? '（本周该餐次的可选菜品都已排满两次，为保证每餐都有安排保留了这一项，建议点「换一换」或适当放宽忌口）'
+      const note = fb.why === 'window'
+        ? '（近两周该餐次的可选菜品已排满，为保证每餐都有安排保留了这一项，建议点「换一换」或适当放宽忌口）'
         : '（当日候选均含已安排的食材且无可替换项，已保留最接近的一项，请按实际情况调整）';
       chosen = {
         it: sub || Object.assign({}, fb.c.it, {
@@ -993,7 +1027,7 @@ function dayPlan(cid, key, dishCount) {
   });
   return out;
 }
-/* 七日计划缓存：同一窗口内只算一次，保证「周内 ≤2 次」在全周口径上成立 */
+/* 两周计划缓存：同一窗口内只算一次，保证 14 天口径的菜品多样性。 */
 let WP = { cid: '', start: '', sig: '', days: {} };
 /* 影响配餐的上下文指纹：饮食画像、经期记录、登录性别、身体管理方案、逐项选择任一变化都要重算 */
 function wpSig() {
@@ -1010,7 +1044,7 @@ function weekPlanFor(cid, startKey) {
   const sig = wpSig();
   if (WP.cid === cid && WP.start === startKey && WP.sig === sig && WP.days) return WP.days;
   const days = {}, cnt = {};
-  for (let i = 0; i < 7; i++) {
+  for (let i = 0; i < MENU_PLAN_DAYS; i++) {
     const k = shiftDay(startKey, i);
     days[k] = dayPlan(cid, k, cnt);
   }
@@ -1094,10 +1128,12 @@ function lineSvg(records, metric) {
   }
   let d = '';
   pts.forEach((p, i) => { d += (i ? ' L ' : 'M ') + X(i).toFixed(1) + ' ' + Y(p.v).toFixed(1); });
-  s += '<path d="' + d + '" fill="none" stroke="#A6432E" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>';
+  s += '<g class="chart-series"><path d="' + d + '" fill="none" stroke="#A6432E" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>';
+  const unit = (ARCHIVE_METRIC[metric] || ['', ''])[1];
   pts.forEach((p, i) => {
-    s += '<circle cx="' + X(i).toFixed(1) + '" cy="' + Y(p.v).toFixed(1) + '" r="3" fill="#FFF" stroke="#A6432E" stroke-width="1.5"/>';
+    s += chartPointHtml(X(i), Y(p.v), p.k, p.v.toFixed(1) + (unit ? ' ' + unit : ''));
   });
+  s += '</g>';
   pts.forEach((p, i) => {
     if (i % Math.ceil(pts.length / 6) === 0 || i === pts.length - 1) {
       s += '<text x="' + X(i).toFixed(1) + '" y="' + (h - 10) + '" font-size="10" fill="#A39A88" text-anchor="middle">' + p.k.slice(5) + '</text>';
@@ -1105,6 +1141,19 @@ function lineSvg(records, metric) {
   });
   s += '</svg>';
   return s;
+}
+
+/* 折线节点：鼠标悬停或键盘聚焦时显示当日具体数据。 */
+function chartPointHtml(x, y, date, value) {
+  const px = +x, py = +y;
+  const tipX = px < 92 ? 8 : (px > 508 ? -124 : -58);
+  const tipY = py < 54 ? 10 : -42;
+  return '<g class="chart-point" transform="translate(' + px.toFixed(1) + ' ' + py.toFixed(1) + ')" tabindex="0" role="img" aria-label="' + esc(date + ' ' + value) + '">' +
+    '<circle r="4" fill="#FFF" stroke="#A6432E" stroke-width="1.5"/>' +
+    '<g class="chart-tooltip" transform="translate(' + tipX + ' ' + tipY + ')" aria-hidden="true">' +
+    '<rect width="116" height="32" rx="3" fill="#2B2622" opacity="0.94"/>' +
+    '<text x="58" y="13" text-anchor="middle" font-size="9.5" fill="#E8DED0">' + esc(date) + '</text>' +
+    '<text x="58" y="25" text-anchor="middle" font-size="10.5" font-weight="600" fill="#FFF">' + esc(value) + '</text></g></g>';
 }
 
 /* 打卡热力图：支持 30 / 60 / 90 天三档，列数随天数自适应 */
@@ -1971,7 +2020,7 @@ function viewHabits() {
   let h = '<section class="panel"><h2>今日打卡</h2>' +
     '<div class="ring-row">' + ringSvg(done.length, list.length) +
     '<div class="ring-side"><p class="big">' + streakDays() + ' <span>天连续</span></p>' +
-    '<p class="muted">达标线为当日完成一半以上。点击条目即可打卡。</p></div></div></section>';
+    '<p class="muted habit-encouragement">' + esc(dailyEncouragement(todayKey())) + '</p></div></div></section>';
 
   /* 宽屏（横屏 / 页面放大）时清单分左右两列、每列自上而下排列；窄屏保持单列 */
   h += '<section class="panel"><h2>习惯清单</h2><ul class="habits cols">';
@@ -2280,10 +2329,11 @@ function weightLineSvg(logs, goal) {
   }
   let d = '';
   logs.forEach((p, i) => { d += (i ? ' L ' : 'M ') + X(i).toFixed(1) + ' ' + Y(p.kg).toFixed(1); });
-  s += '<path d="' + d + '" fill="none" stroke="#A6432E" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>';
+  s += '<g class="chart-series"><path d="' + d + '" fill="none" stroke="#A6432E" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>';
   logs.forEach((p, i) => {
-    s += '<circle cx="' + X(i).toFixed(1) + '" cy="' + Y(p.kg).toFixed(1) + '" r="3" fill="#FFF" stroke="#A6432E" stroke-width="1.5"><title>' + p.k + '　' + p.kg.toFixed(1) + ' kg</title></circle>';
+    s += chartPointHtml(X(i), Y(p.kg), p.k, p.kg.toFixed(1) + ' kg');
   });
+  s += '</g>';
   logs.forEach((p, i) => {
     if (i % Math.ceil(logs.length / 6) === 0 || i === logs.length - 1) {
       s += '<text x="' + X(i).toFixed(1) + '" y="' + (h - 10) + '" font-size="10" fill="#A39A88" text-anchor="middle">' + p.k.slice(5) + '</text>';
@@ -2445,7 +2495,12 @@ if (wmFormBase) wmForm = function () { return wmAutofillForm(wmFormBase.apply(th
 /* --- 身体档案页（原「身体记录」+「身材管理」合并为一个板块） --- */
 const ARCHIVE_METRIC = { weight: ['体重', 'kg'], sleep: ['睡眠时长', '小时'], energy: ['精力', '分'], mood: ['情绪', '分'] };
 
-function archivePanel(key, title, content) {
+function archivePanel(key, title, content, fixedOpen) {
+  if (fixedOpen) {
+    return '<section class="panel archive-panel archive-panel-fixed" data-archive-key="' + key + '">' +
+      '<div class="archive-panel-head"><h2>' + esc(title) + '</h2></div>' +
+      '<div class="archive-panel-body" id="archivePanel-' + key + '">' + content + '</div></section>';
+  }
   const open = !!(ui.archiveOpen && ui.archiveOpen[key]);
   const bodyId = 'archivePanel-' + key;
   return '<section class="panel archive-panel' + (open ? '' : ' is-collapsed') + '" data-archive-key="' + key + '">' +
@@ -2469,7 +2524,7 @@ function viewArchive() {
     '</div>';
   /* 经期模块位于「体重趋势」与「中医体质视角」之间，且仅女性用户可见 */
   if (isFemale()) h += periodSectionHtml();
-  h += archivePanel('tcm', '中医体质视角下的体重管理', archiveTcmHtml()) +
+  h += archivePanel('tcm', '中医体质视角下的体重管理', archiveTcmHtml(), true) +
     archivePanel('wm', '身材管理方案', archiveWmHtml());
   return h;
 }
@@ -2571,9 +2626,6 @@ function archiveWeightTrendHtml() {
   h += '<p class="muted small">近 ' + recent.length + ' 次平均 ' + avg.toFixed(1) + ' kg' +
     (prev ? '　·　较上次 ' + ((curr - prev) > 0 ? '+' : '') + (curr - prev).toFixed(1) + ' kg' : '') +
     '　·　共 ' + logs.length + ' 条记录</p>';
-  h += '<div class="hist">' + logs.slice().reverse().slice(0, 20).map(p =>
-    '<div class="hist-item"><b>' + p.k + '</b><span>' + p.kg.toFixed(1) + ' kg' + (p.fat ? '　体脂 ' + p.fat.toFixed(1) + '%' : '') + '</span>' +
-    '<button class="del" data-action="delw" data-k="' + p.k + '">删除</button></div>').join('') + '</div>';
   return h;
 }
 

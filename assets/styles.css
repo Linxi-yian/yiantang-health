@@ -176,6 +176,12 @@ h4 { font-size: 14px; margin: 0 0 6px; }
 .chip.pickable:hover { border-color: var(--ink3); }
 .chip.pickable.on { background: var(--red); color: #fff; border-color: var(--red); }
 
+/* 选项组仅负责排列按钮，不显示包围整组的外框。 */
+.chips.pick {
+  width: auto; padding: 0; border: 0; border-radius: 0;
+  background: transparent; text-align: initial; transition: none;
+}
+
 /* ---------- 问卷 ---------- */
 .q-head { border-bottom: 1px solid var(--line2); padding-bottom: 16px; margin-bottom: 4px; }
 .q-head h2 { margin-bottom: 6px; }
@@ -270,6 +276,19 @@ h4 { font-size: 14px; margin: 0 0 6px; }
 .profile dd { margin: 0; font-size: 13px; color: var(--ink2); line-height: 1.7; }
 
 .chart-wrap { margin: 6px 0; overflow-x: auto; }
+.chart-series {
+  clip-path: inset(0 100% 0 0);
+  animation: chart-reveal .72s cubic-bezier(.16, 1, .3, 1) forwards;
+}
+.chart-point { cursor: help; }
+.chart-point > circle { transition: fill .15s ease, stroke-width .15s ease; }
+.chart-point:hover > circle,
+.chart-point:focus > circle { fill: #F7E7DF; stroke-width: 2.5; }
+.chart-point:focus { outline: none; }
+.chart-tooltip { opacity: 0; pointer-events: none; transition: opacity .15s ease; }
+.chart-point:hover .chart-tooltip,
+.chart-point:focus .chart-tooltip { opacity: 1; }
+@keyframes chart-reveal { to { clip-path: inset(0 0 0 0); } }
 
 /* ---------- 调理维度 ---------- */
 .dim-head { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
@@ -1009,6 +1028,9 @@ code {
 }
 @media (prefers-reduced-motion: reduce) {
   .archive-toggle i { transition: none; }
+  .chart-series { animation: none; clip-path: none; }
+  .chart-point > circle,
+  .chart-tooltip { transition: none; }
 }
 @media (min-width: 901px) {
   .pair { grid-template-columns: 1fr 1fr; align-items: start; }

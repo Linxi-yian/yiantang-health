@@ -1,6 +1,6 @@
 {
-  "version": "0.4.5",
-  "releasedAt": "2026-10-30",
-  "message": "修复宽屏折叠板块隐藏状态失效",
+  "version": "0.4.6",
+  "releasedAt": "2026-10-31",
+  "message": "优化两周食谱、趋势图交互与档案展示",
   "schemaVersion": 2
 }
